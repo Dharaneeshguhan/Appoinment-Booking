@@ -1,44 +1,29 @@
-# Appointment Slot Booker API
+# Single-Doctor Appointment Booking System
 
-A lightweight, robust Appointment Slot Booker JSON API built with **FastAPI** and **SQLite**. It allows users and staff of an appointment-based service to view available time slots and book appointments, with guaranteed atomic double-booking prevention.
+A secure, full-stack appointment booking application for a single-doctor medical practice. Built with **FastAPI** (Python backend), a file-based **SQLite** database, and a **React + Vite** frontend. Features role-based access control for **Patients**, **Doctors**, and **Administrators**, bcrypt password hashing, JWT token authentication, and strict concurrency control preventing double-booking.
 
 ---
 
-## Features & Behaviors
+## Roles & Access Control
 
-- **List Available Slots**: Query appointment slots with optional date filtering (`?date=YYYY-MM-DD`). Defaults to unbooked slots (`?available_only=true`).
-- **Book a Slot**: Book an available slot by providing customer details. Supports booking either via `POST /slots/{slot_id}/book` or `POST /bookings`.
-- **Double-Booking Prevention**: Engineered with atomic SQLite write transactions (`BEGIN IMMEDIATE`) and a database-level `UNIQUE(slot_id)` constraint, making it impossible for two concurrent requests to double-book the same slot.
-- **Slot Management**: Create new appointment slots with validation ensuring `end_time > start_time` and no overlapping duplicate time intervals.
-- **Booking Management**: Inspect booking details by booking ID or list all past and upcoming bookings.
-- **Clear Status Codes & Error Handling**:
-  - `200 OK` / `201 Created` on success.
-  - `400 Bad Request` on invalid query formatting.
-  - `404 Not Found` if a slot or booking does not exist.
-  - `409 Conflict` when trying to book an already-booked slot or duplicate slot creation.
-  - `422 Unprocessable Entity` on validation errors (e.g. empty customer name, malformed date/time).
+| Role | Portal / Dashboard Features | Permissions |
+| :--- | :--- | :--- |
+| **Patient** | Personal Dashboard | Browse free slots, book appointments (one-click with pre-filled name), view personal consultation history, and cancel own appointments. |
+| **Doctor** | Doctor Portal | View upcoming patient roster, update consultation statuses (`CONFIRMED`, `COMPLETED`, `CANCELLED`), create schedule slots, and delete unbooked slots. |
+| **Administrator** | Admin Console | System oversight: view and manage users, activate/deactivate accounts, create staff accounts, view master booking audit trail, and manage schedule slots. |
+| **Guest / Public** | Landing Page | Browse available consultation times and sign in or create a patient account. |
 
 ---
 
 ## Architecture & Technology Stack
 
-| Component | Choice | Reason |
-| :--- | :--- | :--- |
-| **Framework** | FastAPI | High performance, automatic OpenAPI documentation, schema validation via Pydantic |
-| **Database** | SQLite3 (File-based) | Zero installation overhead, ACID transactions, cross-platform portability |
-| **Validation** | Pydantic v2 | Robust type checking, string sanitization, ISO date/time validation |
-| **Testing** | Pytest + HTTPX | Fast in-memory/isolated SQLite testing with multithreaded concurrency tests |
-
----
-
-## Double-Booking Prevention Mechanism
-
-The service protects against race conditions at two distinct layers:
-
-1. **Database Constraint Layer**: The `bookings` table defines `slot_id INTEGER NOT NULL UNIQUE`. If any parallel connection attempts to insert a second booking for the same `slot_id`, SQLite raises an `IntegrityError`.
-2. **Transaction Lock Layer (`BEGIN IMMEDIATE`)**: During booking, the API initiates a write transaction using `BEGIN IMMEDIATE`. This immediately acquires a reserved write lock on SQLite, ensuring that between reading slot availability and executing the update, no other thread or process can modify the slot.
-
-A multithreaded test (`tests/test_concurrency.py`) validates this: 10 parallel threads simultaneously attempting to book the exact same slot result in exactly 1 success (`201 Created`) and 9 rejections (`409 Conflict`).
+| Layer | Technology | Purpose | Java / Spring Boot Equivalent |
+| :--- | :--- | :--- | :--- |
+| **Backend API** | FastAPI (Python 3.12) | REST API endpoints, routing, CORS, validation | Spring Boot `@RestController`, Spring MVC |
+| **Database** | SQLite 3 (file-based) | Relational storage with foreign keys and WAL mode | Embedded H2 / PostgreSQL + Flyway |
+| **Security & Auth** | BCrypt + PyJWT | Password hashing (salt rounds=12) and signed JWT tokens | Spring Security, `BCryptPasswordEncoder`, `JwtAuthenticationFilter` |
+| **Frontend SPA** | React 18 + Vite | Reactive UI with role-based dashboards | React / Angular Single Page Application |
+| **Testing** | Pytest + HTTPX | Automated unit, RBAC, persistence, and concurrency tests | JUnit 5 + MockMvc / REST Assured |
 
 ---
 
@@ -48,46 +33,105 @@ A multithreaded test (`tests/test_concurrency.py`) validates this: 10 parallel t
 appointment_booker/
 ├── app/
 │   ├── __init__.py
-│   ├── config.py           # Configuration (database path, settings)
-│   ├── database.py         # SQLite connection manager, schema setup, WAL mode
-│   ├── models.py           # Pydantic schemas (Request/Response validation)
-│   ├── services.py         # Core business logic & atomic transaction handling
-│   ├── routers/
-│   │   ├── __init__.py
-│   │   ├── slots.py        # /slots endpoints
-│   │   └── bookings.py     # /bookings endpoints
-│   └── main.py             # FastAPI app initialization, CORS, route registration
+│   ├── config.py           # Configuration (DB path, JWT secrets, token expiry)
+│   ├── database.py         # SQLite connection manager, schema setup, WAL mode & migrations
+│   ├── auth.py             # BCrypt hashing, JWT generation, get_current_user & require_roles
+│   ├── models.py           # Pydantic schemas (User, Slot, Booking DTOs)
+│   ├── services.py         # Business logic layer with atomic SQLite write transactions
+│   └── routers/
+│       ├── __init__.py
+│       ├── auth.py         # /auth/signup, /auth/login, /auth/me
+│       ├── slots.py        # /slots endpoints (browse, create, delete, book)
+│       ├── bookings.py     # /bookings, /my-bookings, /doctor/schedule, /bookings/{id}/status
+│       └── admin.py        # /admin/users, /admin/users/{id}/status
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py         # Pytest fixtures with temporary isolated SQLite DB
-│   ├── test_slots.py       # Slot management & filtering tests
-│   ├── test_bookings.py    # Booking creation, 404, 409 conflict, and validation tests
-│   └── test_concurrency.py # Multithreaded race-condition stress tests
-├── seed_data.py            # Utility script to pre-populate slots for the next 3 days
-├── run.py                  # Convenience script to start the local uvicorn server
+│   ├── conftest.py         # Isolated temporary SQLite fixture & TestClient
+│   ├── test_auth.py        # Signup, login, invalid password, profile, deactivation tests
+│   ├── test_rbac.py        # Ownership checks, role restrictions, cancellation, status updates
+│   ├── test_slots.py       # Slot listing, time range, date filter tests
+│   ├── test_bookings.py    # Booking workflows, 404, 409 double-booking rejection tests
+│   ├── test_concurrency.py # Multithreaded race-condition stress tests (10 simultaneous threads)
+│   └── test_persistence.py # Verifies data survives application server restarts
+├── frontend/               # React + Vite application
+│   ├── package.json        # Frontend dependencies
+│   ├── vite.config.js      # Vite dev server & backend API proxy
+│   ├── index.html          # HTML shell
+│   └── src/
+│       ├── main.jsx        # React root bootstrap
+│       ├── App.jsx         # Main container rendering active dashboard by role
+│       ├── App.css         # Clean, responsive styles
+│       ├── api.js          # Central API client with automatic JWT Bearer token injection
+│       ├── context/
+│       │   └── AuthContext.jsx # React context managing user profile, token, login, logout
+│       └── components/
+│           ├── Header.jsx           # Navbar with role badge, user greeting, and logout
+│           ├── AuthModal.jsx        # Login & Patient Sign Up modal with quick demo buttons
+│           ├── PatientDashboard.jsx # Patient portal (browse slots, personal history, cancel)
+│           ├── DoctorDashboard.jsx  # Doctor portal (patient roster, status toggle, slots)
+│           ├── AdminDashboard.jsx   # Admin console (user management, master bookings)
+│           ├── SlotList.jsx         # Grid of available slots with date filter
+│           ├── BookingModal.jsx     # Booking dialog
+│           └── CreateSlot.jsx       # Staff slot creation form
+├── seed_users.py           # Seeds default Doctor and Administrator accounts safely
+├── seed_data.py            # Seeds sample slots for upcoming days
+├── run.py                  # Convenience script to start the local FastAPI server
 ├── requirements.txt        # Python dependencies
 ├── pytest.ini             # Pytest configuration
-├── README.md               # Documentation & usage guide
-└── frontend/               # React + Vite frontend application
-    ├── package.json        # Frontend dependencies & build scripts
-    ├── vite.config.js      # Vite dev server & proxy configuration
-    ├── index.html          # HTML template
-    └── src/
-        ├── main.jsx        # React application entrypoint
-        ├── App.jsx         # Root component managing views, state, and alerts
-        ├── App.css         # UI stylesheet (responsive cards, grid, modals)
-        ├── api.js          # API service client for communicating with FastAPI
-        └── components/
-            ├── Header.jsx       # Brand navigation & tab buttons
-            ├── SlotList.jsx     # Available slots grid with date filter
-            ├── BookingModal.jsx # Customer booking modal dialog
-            ├── BookingsList.jsx # Persistent confirmed bookings table
-            └── CreateSlot.jsx   # Staff slot creation form
+└── README.md               # Complete documentation
 ```
 
 ---
 
-## Getting Started on Windows
+## Java Full Stack Developer's Mental Model
+
+If you are coming from Java (Spring Boot / Angular), here is how every file maps to concepts you already know:
+
+### Backend Mapping
+
+| Python File | Spring Boot / Java Equivalent | Purpose & Description |
+| :--- | :--- | :--- |
+| [`requirements.txt`](requirements.txt) | `pom.xml` / `build.gradle` | Declares dependencies (`fastapi`, `uvicorn`, `pydantic`, `pytest`, `bcrypt`, `pyjwt`). |
+| [`run.py`](run.py) / [`app/main.py`](app/main.py) | `@SpringBootApplication` / `Application.java` | Entry point that initializes server and registers routers. |
+| [`app/auth.py`](app/auth.py) | `SecurityFilterChain` + `JwtTokenProvider` + `PasswordEncoder` | Handles BCrypt password hashing, JWT generation, and `@PreAuthorize` role checking. |
+| [`app/models.py`](app/models.py) | DTO classes with Bean Validation (`@NotNull`, `@Size`, `@Email`) | Pydantic models validating request bodies and serializing JSON responses. |
+| [`app/services.py`](app/services.py) | `@Service` classes with `@Transactional` | Business logic executing SQL queries with atomic SQLite locks (`BEGIN IMMEDIATE`). |
+| [`app/database.py`](app/database.py) | `DataSource` / `HikariCP` + Flyway migration | Manages database connection lifecycle, tables, and migrations. |
+| [`app/routers/auth.py`](app/routers/auth.py) | `AuthController` (`/auth/**`) | Public endpoints for user signup, login, and profile fetching. |
+| [`app/routers/slots.py`](app/routers/slots.py) | `SlotController` (`/slots/**`) | Available slot queries, staff slot creation, and slot deletion. |
+| [`app/routers/bookings.py`](app/routers/bookings.py) | `BookingController` (`/bookings/**`, `/my-bookings/**`) | Booking management, patient ownership checks, and status updates. |
+| [`app/routers/admin.py`](app/routers/admin.py) | `AdminController` (`/admin/**`) | User management and account deactivation endpoints. |
+| `tests/test_*.py` | JUnit 5 + MockMvc / REST Assured | Automated tests verifying authentication, RBAC, double-booking, and concurrency. |
+
+### Frontend Mapping
+
+| React / Vite Frontend File | Java / Full Stack Equivalent | Purpose & Description |
+| :--- | :--- | :--- |
+| [`frontend/package.json`](frontend/package.json) | Node build descriptor (`pom.xml`) | Defines frontend dependencies (`react`, `react-dom`, `vite`). |
+| [`frontend/src/context/AuthContext.jsx`](frontend/src/context/AuthContext.jsx) | `SecurityContextHolder` (Client-side) | Holds the authenticated user's profile, role, and JWT token in React state & `localStorage`. |
+| [`frontend/src/api.js`](frontend/src/api.js) | `RestTemplate` / Angular `HttpInterceptor` | Central API service that automatically attaches `Authorization: Bearer <token>` to requests. |
+| [`frontend/src/App.jsx`](frontend/src/App.jsx) | Root Single Page App Container / Router | Renders the appropriate role portal based on `user.role` (`PATIENT`, `DOCTOR`, `ADMIN`). |
+| [`frontend/src/components/AuthModal.jsx`](frontend/src/components/AuthModal.jsx) | Login / Registration Dialog | Modal for patient sign-up and login with quick-fill demo buttons. |
+| [`frontend/src/components/PatientDashboard.jsx`](frontend/src/components/PatientDashboard.jsx) | Patient Client Portal | Allows patients to book slots, view their appointments, and cancel visits. |
+| [`frontend/src/components/DoctorDashboard.jsx`](frontend/src/components/DoctorDashboard.jsx) | Doctor Staff Portal | Roster of patient appointments with status actions (`Mark Completed`, `Cancel`). |
+| [`frontend/src/components/AdminDashboard.jsx`](frontend/src/components/AdminDashboard.jsx) | Admin Backoffice View | Master user management, account activation toggle, and audit trail of all bookings. |
+
+---
+
+## Default Accounts for Testing
+
+The database comes pre-seeded with two staff accounts:
+
+| Role | Email | Password | Name |
+| :--- | :--- | :--- | :--- |
+| **Doctor** | `doctor@clinic.com` | `Doctor@123` | Dr. Sarah Mitchell |
+| **Administrator** | `admin@clinic.com` | `Admin@123` | Practice Administrator |
+
+*Patients can create their own accounts via the **New Patient Sign Up** tab in the UI.*
+
+---
+
+## Windows Execution Guide
 
 ### Prerequisites
 - **Python 3.10+** (tested on 3.12)
@@ -110,15 +154,19 @@ npm install
 
 ---
 
-### Step 2: Seed Sample Appointment Slots (Optional)
-In your backend terminal, populate initial available appointment slots for the upcoming 3 days:
+### Step 2: Seed Sample Data & Accounts
+In your backend terminal:
 ```powershell
+# 1. Seed Doctor and Administrator accounts
+python seed_users.py
+
+# 2. (Optional) Seed sample slots for upcoming days
 python seed_data.py
 ```
 
 ---
 
-### Step 3: Run the Application (Separate Terminals)
+### Step 3: Run Both Servers in Separate Terminals
 
 #### Terminal 1 — Start the FastAPI Backend:
 ```powershell
@@ -138,203 +186,16 @@ Open your web browser and navigate to **`http://localhost:3000`**.
 
 ---
 
-## Running Automated Backend Tests
+## Running Automated Tests
 
-Run the full pytest suite locally:
+Run the full test suite locally:
 ```powershell
 python -m pytest -v
 ```
 
-All 16 tests will execute:
-- Unit tests for slot creation and time validation
-- Date filtering tests
-- Booking workflows, 404 missing slot, and 409 double-booking rejection
-- Multithreaded race-condition concurrency tests (10 simultaneous threads)
-- Persistence test verifying bookings survive server restarts
-
-
----
-
-## API Reference & Examples
-
-### 1. List Available Slots
-Retrieve slots that are currently free.
-
-```bash
-# Get all available slots
-curl -X GET "http://127.0.0.1:8000/slots"
-
-# Filter by a specific date
-curl -X GET "http://127.0.0.1:8000/slots?date=2026-10-25"
-
-# Include already-booked slots
-curl -X GET "http://127.0.0.1:8000/slots?available_only=false"
-```
-
-**Response (`200 OK`)**:
-```json
-[
-  {
-    "id": 1,
-    "slot_date": "2026-10-25",
-    "start_time": "09:00",
-    "end_time": "09:30",
-    "is_booked": false,
-    "created_at": "2026-10-20 10:15:00"
-  }
-]
-```
-
----
-
-### 2. Create a New Slot
-Staff can add slots for customers to book.
-
-```bash
-curl -X POST "http://127.0.0.1:8000/slots" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "slot_date": "2026-10-25",
-    "start_time": "14:00",
-    "end_time": "14:30"
-  }'
-```
-
-**Response (`201 Created`)**:
-```json
-{
-  "id": 8,
-  "slot_date": "2026-10-25",
-  "start_time": "14:00",
-  "end_time": "14:30",
-  "is_booked": false,
-  "created_at": "2026-10-20 10:16:00"
-}
-```
-
----
-
-### 3. Book an Appointment Slot
-Book a slot using either `/slots/{slot_id}/book` or `/bookings`.
-
-```bash
-# Option A: Direct slot booking endpoint
-curl -X POST "http://127.0.0.1:8000/slots/1/book" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "customer_name": "Alice Cooper",
-    "notes": "Consultation"
-  }'
-
-# Option B: Bookings resource endpoint
-curl -X POST "http://127.0.0.1:8000/bookings" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "slot_id": 1,
-    "customer_name": "Alice Cooper",
-    "notes": "Consultation"
-  }'
-```
-
-**Success Response (`201 Created`)**:
-```json
-{
-  "id": 1,
-  "slot_id": 1,
-  "customer_name": "Alice Cooper",
-  "notes": "Consultation",
-  "booked_at": "2026-10-20 10:18:22",
-  "slot": {
-    "id": 1,
-    "slot_date": "2026-10-25",
-    "start_time": "09:00",
-    "end_time": "09:30",
-    "is_booked": true,
-    "created_at": "2026-10-20 10:15:00"
-  }
-}
-```
-
-**Error Responses**:
-- **Already Booked (`409 Conflict`)**:
-  ```json
-  {
-    "detail": "Appointment slot with ID 1 has already been booked."
-  }
-  ```
-- **Slot Not Found (`404 Not Found`)**:
-  ```json
-  {
-    "detail": "Appointment slot with ID 999 does not exist."
-  }
-  ```
-- **Invalid Name (`422 Unprocessable Entity`)**:
-  ```json
-  {
-    "detail": [
-      {
-        "loc": ["body", "customer_name"],
-        "msg": "Customer name cannot be empty or whitespace only",
-        "type": "value_error"
-      }
-    ]
-  }
-  ```
-
----
-
-### 4. List and Retrieve Bookings
-Inspect existing confirmed appointments.
-
-```bash
-# List all confirmed bookings
-curl -X GET "http://127.0.0.1:8000/bookings"
-
-# Get a single booking by ID
-curl -X GET "http://127.0.0.1:8000/bookings/1"
-```
-
----
-
-## Java Full Stack Developer's Mental Model
-
-If you are coming from Java (Spring Boot / Jakarta EE), here is how every Python component in this project maps directly to concepts you already know:
-
-### Backend Mapping
-
-| Python Project File | Spring Boot / Java Equivalent | Purpose & Description |
-| :--- | :--- | :--- |
-| [`requirements.txt`](requirements.txt) | `pom.xml` (Maven) / `build.gradle` | Lists third-party dependencies (`fastapi`, `uvicorn`, `pydantic`, `pytest`). |
-| [`run.py`](run.py) / [`app/main.py`](app/main.py) | `@SpringBootApplication` / `Application.java` | Entry point that boots the web server (like embedded Tomcat in Spring Boot). |
-| [`app/routers/slots.py`](app/routers/slots.py)<br>[`app/routers/bookings.py`](app/routers/bookings.py) | `@RestController`<br>`@RequestMapping("/slots")` | API route controllers handling incoming HTTP requests, paths, parameters, and HTTP response codes. |
-| [`app/models.py`](app/models.py) | DTO classes with Bean Validation (`@NotNull`, `@Pattern`, `@Size`) | Pydantic models that automatically parse and validate JSON request bodies and serialize responses. |
-| [`app/services.py`](app/services.py) | `@Service` classes with `@Transactional` | Business logic layer executing database queries, managing ACID transactions, and throwing domain exceptions. |
-| [`app/database.py`](app/database.py) | `DataSource` / `HikariCP` configuration + Flyway `schema.sql` | Manages SQLite database connection lifecycles, creates schema tables, and configures WAL mode. |
-| `FastAPI Depends(get_db)` | `@Autowired` / Spring Dependency Injection | Automatically injects an active database connection per-request into router functions. |
-| [`tests/conftest.py`](tests/conftest.py) | `@TestConfiguration` / Test Fixture | Sets up an isolated SQLite database and test HTTP client before running test cases. |
-| [`tests/test_*.py`](tests/) | JUnit 5 + MockMvc / REST Assured tests | Automated assertions verifying endpoints, status codes, and concurrency safety. |
-
-### Frontend Mapping
-
-| React / Vite Frontend File | Java / Full Stack Equivalent | Purpose & Description |
-| :--- | :--- | :--- |
-| [`frontend/package.json`](frontend/package.json) | Frontend `pom.xml` / Node build configuration | Defines frontend dependencies (`react`, `react-dom`, `vite`). |
-| [`frontend/vite.config.js`](frontend/vite.config.js) | Webpack / Spring Boot reverse proxy config | Configures the local dev server and reverse proxy routing `/api` calls to the FastAPI backend. |
-| [`frontend/src/api.js`](frontend/src/api.js) | Spring `RestTemplate` / Angular `HttpService` | Central client service handling HTTP calls (`GET`, `POST`), serializing JSON payloads, and parsing error codes (400, 404, 409, 422). |
-| [`frontend/src/App.jsx`](frontend/src/App.jsx) | Root Single Page App Container / Angular `AppComponent` | Holds application-level state (slots, bookings, active tab, notification alerts). |
-| [`frontend/src/components/SlotList.jsx`](frontend/src/components/SlotList.jsx) | JSP / Thymeleaf table & filter component | Displays available slot cards and date filter control. |
-| [`frontend/src/components/BookingModal.jsx`](frontend/src/components/BookingModal.jsx) | Modal Dialog / Form component | Captures customer name and notes, triggers the booking API call, and handles error states. |
-| [`frontend/src/components/BookingsList.jsx`](frontend/src/components/BookingsList.jsx) | Admin / Staff management report view | Displays all persistent bookings from SQLite. |
-| [`frontend/src/components/CreateSlot.jsx`](frontend/src/components/CreateSlot.jsx) | Admin slot creation form | Provides a UI to create new appointment slots calling `POST /slots`. |
-
-
----
-
-## Assumptions & Recorded Decisions
-
-1. **Stack**: Python 3.12 with FastAPI and built-in SQLite file storage (`appointment_booker.db`).
-2. **Concurrency**: SQLite WAL mode and immediate transactions (`BEGIN IMMEDIATE`) plus a `UNIQUE` constraint on `bookings.slot_id` provide double-booking prevention without needing external distributed lock engines.
-3. **Authentication**: None per specification.
-4. **Time & Date Representation**: ISO 8601 strings (`YYYY-MM-DD` for dates, `HH:MM` in 24-hour format for times, UTC timestamps for `created_at` and `booked_at`).
-5. **Slot Ordering**: Slot listings default to ascending chronological order (`slot_date ASC, start_time ASC`).
-
+All **27 tests** will execute and pass:
+- **Authentication**: Patient registration, duplicate email rejection, login, 401 unauthorized, token validation, account deactivation.
+- **RBAC & Permissions**: Patient slot creation forbidden, doctor slot creation, patient booking ownership & cancellation, slot freeing upon cancellation, doctor status updates, admin user management.
+- **Slot Management & Filtering**: Time sequence validation, date filtering, 404 missing slots.
+- **Double-Booking Prevention**: Sequential double-booking rejection (`409 Conflict`) and 10-thread parallel race-condition stress test.
+- **Persistence Across Restarts**: Verifies SQLite file records survive server restarts.

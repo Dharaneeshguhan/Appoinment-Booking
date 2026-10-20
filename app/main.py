@@ -1,15 +1,14 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from app.database import init_db
-from app.routers import slots, bookings
+from app.routers import slots, bookings, auth, admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize the SQLite database tables on startup
+    # Initialize SQLite database and run migrations on startup
     init_db()
     yield
 
@@ -17,10 +16,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Appointment Slot Booker API",
     description=(
-        "A JSON API for viewing available appointment slots and booking appointments. "
-        "Engineered with strict atomic concurrency control to prevent double-booking."
+        "A secure single-doctor Appointment Slot Booker JSON API with Role-Based Access Control "
+        "(Patient, Doctor, Administrator), password hashing, JWT authentication, and atomic double-booking prevention."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -34,24 +33,46 @@ app.add_middleware(
 )
 
 # Register routers
+app.include_router(auth.router)
 app.include_router(slots.router)
 app.include_router(bookings.router)
+app.include_router(admin.router)
 
 
 @app.get("/", tags=["General"], summary="API Root / Info")
 def root():
     return {
-        "service": "Appointment Slot Booker API",
-        "version": "1.0.0",
+        "service": "Appointment Slot Booker API (Single-Doctor Practice)",
+        "version": "2.0.0",
         "status": "online",
         "documentation": "/docs",
+        "roles": ["PATIENT", "DOCTOR", "ADMIN"],
         "endpoints": {
-            "list_available_slots": "GET /slots?available_only=true",
-            "filter_slots_by_date": "GET /slots?date=YYYY-MM-DD",
-            "create_slot": "POST /slots",
-            "book_slot_via_slot_id": "POST /slots/{slot_id}/book",
-            "book_slot_via_bookings": "POST /bookings",
-            "list_all_bookings": "GET /bookings"
+            "auth": {
+                "signup": "POST /auth/signup",
+                "login": "POST /auth/login",
+                "profile": "GET /auth/me"
+            },
+            "slots": {
+                "list_available_slots": "GET /slots?available_only=true",
+                "filter_slots_by_date": "GET /slots?date=YYYY-MM-DD",
+                "create_slot": "POST /slots",
+                "delete_slot": "DELETE /slots/{slot_id}",
+                "book_slot": "POST /slots/{slot_id}/book"
+            },
+            "patient": {
+                "my_appointments": "GET /my-bookings",
+                "cancel_appointment": "POST /my-bookings/{booking_id}/cancel"
+            },
+            "doctor": {
+                "schedule": "GET /doctor/schedule",
+                "update_appointment_status": "PATCH /bookings/{booking_id}/status"
+            },
+            "admin": {
+                "list_users": "GET /admin/users",
+                "create_user": "POST /admin/users",
+                "toggle_user_status": "PATCH /admin/users/{user_id}/status"
+            }
         }
     }
 
